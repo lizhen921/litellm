@@ -30,6 +30,7 @@ import time
 import hashlib
 from typing import Dict, Optional, Tuple
 import threading
+from litellm._logging import verbose_proxy_logger
 
 
 class CacheEntry:
@@ -58,11 +59,28 @@ class LocalCacheManager:
     This avoids redundant network requests to check if cache exists on Google's servers.
 
     Each cache is scoped by Vertex AI project and location to support multi-project setups.
+
+    Features:
+    - Automatic background cleanup of expired entries every 5 minutes
+    - Thread-safe operations with lock protection
+    - Lazy deletion on get_cache() calls
     """
 
-    def __init__(self):
+    def __init__(self, cleanup_interval_seconds: int = 300):
+        """
+        Initialize the cache manager.
+
+        Args:
+            cleanup_interval_seconds: How often to run background cleanup (default: 300s = 5 minutes)
+        """
         self._cache: Dict[str, CacheEntry] = {}
         self._lock = threading.Lock()
+        self._cleanup_interval = cleanup_interval_seconds
+        self._cleanup_thread: Optional[threading.Thread] = None
+        self._stop_cleanup = threading.Event()
+
+        # Start background cleanup thread
+        self._start_cleanup_thread()
 
     def _make_scoped_key(
         self,
@@ -125,9 +143,18 @@ class LocalCacheManager:
         )
 
         with self._lock:
-            # Add a small buffer (5 seconds) to avoid edge cases where local cache
+            # Add a small buffer to avoid edge cases where local cache
             # thinks it's valid but Google has just expired it
-            adjusted_ttl = ttl_seconds - 5 if ttl_seconds > 5 else ttl_seconds
+            # Dynamic buffer: 2% of TTL, minimum 3s, maximum 10s, rounded to integer
+            buffer_seconds = int(max(3, min(10, ttl_seconds * 0.02)))
+            adjusted_ttl = ttl_seconds - buffer_seconds if ttl_seconds > buffer_seconds else ttl_seconds
+
+            verbose_proxy_logger.debug(
+                f"本地缓存: 存储缓存 cache_key={cache_key[:30]}..., "
+                f"Google TTL={int(ttl_seconds)}秒, 本地TTL={int(adjusted_ttl)}秒 "
+                f"(缓冲={buffer_seconds}秒)"
+            )
+
             self._cache[scoped_key] = CacheEntry(cache_id, adjusted_ttl)
 
     def get_cache(
@@ -218,6 +245,64 @@ class LocalCacheManager:
         with self._lock:
             self._cache.clear()
 
+    def _start_cleanup_thread(self) -> None:
+        """
+        Start background thread for periodic cleanup of expired entries.
+
+        The thread runs as a daemon, so it won't prevent the program from exiting.
+        """
+        def cleanup_loop():
+            verbose_proxy_logger.debug(
+                f"本地缓存: 后台清理线程已启动，清理间隔={self._cleanup_interval}秒"
+            )
+
+            while not self._stop_cleanup.is_set():
+                # Wait for cleanup interval or until stop signal
+                self._stop_cleanup.wait(timeout=self._cleanup_interval)
+
+                if self._stop_cleanup.is_set():
+                    break
+
+                # Perform cleanup
+                try:
+                    removed = self.cleanup_expired()
+                    if removed > 0:
+                        verbose_proxy_logger.debug(
+                            f"本地缓存: 后台清理完成，删除了 {removed} 个过期缓存项"
+                        )
+                except Exception as e:
+                    verbose_proxy_logger.error(
+                        f"本地缓存: 后台清理出错 - {str(e)}"
+                    )
+
+            verbose_proxy_logger.debug("本地缓存: 后台清理线程已停止")
+
+        self._cleanup_thread = threading.Thread(
+            target=cleanup_loop,
+            daemon=True,  # Daemon thread won't prevent program exit
+            name="vertex-cache-cleanup"
+        )
+        self._cleanup_thread.start()
+
+    def shutdown(self) -> None:
+        """
+        Gracefully shutdown the background cleanup thread.
+
+        This method is optional - the daemon thread will exit automatically
+        when the program exits. But calling this provides a cleaner shutdown.
+        """
+        verbose_proxy_logger.debug("本地缓存: 正在停止后台清理线程...")
+        self._stop_cleanup.set()
+
+        if self._cleanup_thread and self._cleanup_thread.is_alive():
+            self._cleanup_thread.join(timeout=2)
+            if self._cleanup_thread.is_alive():
+                verbose_proxy_logger.warning(
+                    "本地缓存: 后台清理线程未能在 2 秒内停止"
+                )
+            else:
+                verbose_proxy_logger.debug("本地缓存: 后台清理线程已停止")
+
     def cleanup_expired(self) -> int:
         """
         Remove all expired cache entries.
@@ -239,18 +324,36 @@ class LocalCacheManager:
         Get cache statistics.
 
         Returns:
-            Dictionary with cache statistics
+            Dictionary with cache statistics including:
+            - total_entries: Total number of cache entries
+            - valid_entries: Number of non-expired entries
+            - expired_entries: Number of expired entries (still in memory)
+            - estimated_memory_kb: Rough memory usage estimate
+            - cleanup_interval: Background cleanup interval in seconds
+            - cleanup_thread_alive: Whether cleanup thread is running
+            - cache_keys_sample: First 10 cache keys (for debugging)
         """
         with self._lock:
             total = len(self._cache)
             expired = sum(1 for entry in self._cache.values() if entry.is_expired())
             valid = total - expired
 
+            # Estimate memory usage (rough approximation)
+            # Each entry: ~200 bytes (cache_id string + timestamps + overhead)
+            estimated_memory_kb = (total * 200) / 1024
+
             return {
                 "total_entries": total,
                 "valid_entries": valid,
                 "expired_entries": expired,
-                "cache_keys": list(self._cache.keys())
+                "estimated_memory_kb": round(estimated_memory_kb, 2),
+                "cleanup_interval_seconds": self._cleanup_interval,
+                "cleanup_thread_alive": (
+                    self._cleanup_thread.is_alive()
+                    if self._cleanup_thread
+                    else False
+                ),
+                "cache_keys_sample": list(self._cache.keys())[:10],  # First 10 keys only
             }
 
 
