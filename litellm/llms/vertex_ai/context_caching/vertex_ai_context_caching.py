@@ -498,7 +498,7 @@ class ContextCachingEndpoints(VertexBase):
         )
 
         ## CHECK IF CACHED ON GOOGLE (network call, but only if not in local cache)
-        verbose_proxy_logger.debug(
+        verbose_proxy_logger.info(
             f"Vertex AI 上下文缓存: 查询 Google API 缓存 cache_key={generated_cache_key[:50]}..."
         )
         google_cache_name = self.check_cache(
@@ -514,13 +514,13 @@ class ContextCachingEndpoints(VertexBase):
             vertex_auth_header=vertex_auth_header
         )
         if google_cache_name:
-            verbose_proxy_logger.debug(
+            verbose_proxy_logger.info(
                 f"Vertex AI 上下文缓存: ✅ Google API 缓存命中 - cache_id={google_cache_name}, "
                 f"cache_key={generated_cache_key[:50]}..."
             )
             return non_cached_messages, optional_params, google_cache_name
 
-        verbose_proxy_logger.debug(
+        verbose_proxy_logger.info(
             f"Vertex AI 上下文缓存: ❌ Google API 未找到缓存 - cache_key={generated_cache_key[:50]}..., "
             f"正在创建新缓存..."
         )
@@ -587,7 +587,7 @@ class ContextCachingEndpoints(VertexBase):
             ttl_str_from_messages = extract_ttl_from_cached_messages(cached_messages)
             ttl_seconds = parse_ttl_to_seconds(ttl_str_from_messages) if ttl_str_from_messages else 3600.0
 
-        verbose_proxy_logger.debug(
+        verbose_proxy_logger.info(
             f"Vertex AI 上下文缓存: ✅ 成功创建新缓存 - cache_id={cache_id}, "
             f"cache_key={generated_cache_key[:50]}..., ttl={ttl_seconds}s, "
             f"正在存储到本地缓存..."
@@ -806,7 +806,7 @@ class ContextCachingEndpoints(VertexBase):
             ttl_str_from_messages = extract_ttl_from_cached_messages(cached_messages)
             ttl_seconds = parse_ttl_to_seconds(ttl_str_from_messages) if ttl_str_from_messages else 3600.0
 
-        verbose_proxy_logger.debug(
+        verbose_proxy_logger.info(
             f"Vertex AI 上下文缓存: ✅ [异步] 成功创建新缓存 - cache_id={cache_id}, "
             f"cache_key={generated_cache_key[:50]}..., ttl={ttl_seconds}s, "
             f"正在存储到本地缓存..."

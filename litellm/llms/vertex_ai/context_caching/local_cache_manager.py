@@ -28,6 +28,7 @@ Usage:
 
 import time
 import hashlib
+import os
 from typing import Dict, Optional, Tuple
 import threading
 from litellm._logging import verbose_proxy_logger
@@ -78,6 +79,11 @@ class LocalCacheManager:
         self._cleanup_interval = cleanup_interval_seconds
         self._cleanup_thread: Optional[threading.Thread] = None
         self._stop_cleanup = threading.Event()
+
+        verbose_proxy_logger.info(
+            f"本地缓存: LocalCacheManager.__init__ 被调用, 进程PID={os.getpid()}, "
+            f"实例ID={id(self)}, 清理间隔={cleanup_interval_seconds}秒"
+        )
 
         # Start background cleanup thread
         self._start_cleanup_thread()
@@ -146,16 +152,18 @@ class LocalCacheManager:
             # Add a small buffer to avoid edge cases where local cache
             # thinks it's valid but Google has just expired it
             # Dynamic buffer: 2% of TTL, minimum 3s, maximum 10s, rounded to integer
-            buffer_seconds = int(max(3, min(10, ttl_seconds * 0.02)))
-            adjusted_ttl = ttl_seconds - buffer_seconds if ttl_seconds > buffer_seconds else ttl_seconds
-
             verbose_proxy_logger.debug(
                 f"本地缓存: 存储缓存 cache_key={cache_key[:30]}..., "
-                f"Google TTL={int(ttl_seconds)}秒, 本地TTL={int(adjusted_ttl)}秒 "
-                f"(缓冲={buffer_seconds}秒)"
+                f"Google TTL={int(ttl_seconds)}秒"
+                f"PID={os.getpid()}, 实例ID={id(self)}, 当前缓存项数={len(self._cache)}"
             )
 
-            self._cache[scoped_key] = CacheEntry(cache_id, adjusted_ttl)
+            self._cache[scoped_key] = CacheEntry(cache_id, ttl_seconds)
+
+            verbose_proxy_logger.debug(
+                f"本地缓存: 存储完成 scoped_key={scoped_key}, "
+                f"存储后缓存项数={len(self._cache)}"
+            )
 
     def get_cache(
         self,
@@ -181,16 +189,32 @@ class LocalCacheManager:
         )
 
         with self._lock:
+            total_items = len(self._cache)
             entry = self._cache.get(scoped_key)
 
             if entry is None:
+                # Show all cache keys for debugging
+                all_keys_sample = list(self._cache.keys())[:5]  # First 5 keys
+                verbose_proxy_logger.debug(
+                    f"本地缓存: get_cache未找到缓存 - "
+                    f"查找key={scoped_key}, "
+                    f"总缓存项数={total_items}, PID={os.getpid()}, 实例ID={id(self)}, "
+                    f"现有key样本(前5个)={all_keys_sample}"
+                )
                 return None
 
             if entry.is_expired():
                 # Clean up expired entry
                 del self._cache[scoped_key]
+                verbose_proxy_logger.debug(
+                    f"本地缓存: get_cache发现缓存已过期 - scoped_key={scoped_key}"
+                )
                 return None
 
+            verbose_proxy_logger.debug(
+                f"本地缓存: get_cache命中 - scoped_key={scoped_key}, "
+                f"剩余TTL={entry.time_until_expiry():.1f}秒, PID={os.getpid()}"
+            )
             return entry.cache_id
 
     def has_valid_cache(
@@ -252,8 +276,9 @@ class LocalCacheManager:
         The thread runs as a daemon, so it won't prevent the program from exiting.
         """
         def cleanup_loop():
-            verbose_proxy_logger.debug(
-                f"本地缓存: 后台清理线程已启动，清理间隔={self._cleanup_interval}秒"
+            verbose_proxy_logger.info(
+                f"本地缓存: 后台清理线程已启动，清理间隔={self._cleanup_interval}秒, "
+                f"实例ID={id(self)}"
             )
 
             while not self._stop_cleanup.is_set():
@@ -375,5 +400,13 @@ def get_cache_manager() -> LocalCacheManager:
         with _manager_lock:
             if _global_cache_manager is None:
                 _global_cache_manager = LocalCacheManager()
+                verbose_proxy_logger.info(
+                    f"本地缓存: 创建新的全局cache manager实例 ID={id(_global_cache_manager)}"
+                )
+    else:
+        verbose_proxy_logger.debug(
+            f"本地缓存: 返回现有全局cache manager实例 ID={id(_global_cache_manager)}, "
+            f"当前缓存项数={len(_global_cache_manager._cache)}"
+        )
 
     return _global_cache_manager
