@@ -1,5 +1,6 @@
 from typing import List, Literal, Optional, Tuple, Union
 from datetime import datetime
+import os
 
 import httpx
 
@@ -197,15 +198,34 @@ class ContextCachingEndpoints(VertexBase):
                 },
             )
 
+            verbose_proxy_logger.info(
+                f"🔍 请求Google API查询缓存 - cache_key={cache_key[:50]}..., "
+                f"project={vertex_project}, location={vertex_location}, "
+                f"provider={custom_llm_provider}, PID={os.getpid()}, url={url}"
+            )
+
             resp = client.get(url=url, headers=headers)
             resp.raise_for_status()
+
+            verbose_proxy_logger.info(
+                f"✅ Google API查询缓存响应成功 - cache_key={cache_key[:50]}..., "
+                f"status_code={resp.status_code}, PID={os.getpid()}"
+            )
         except httpx.HTTPStatusError as e:
+            verbose_proxy_logger.info(
+                f"❌ Google API查询缓存失败 - cache_key={cache_key[:50]}..., "
+                f"status_code={e.response.status_code}, PID={os.getpid()}"
+            )
             if e.response.status_code == 403:
                 return None
             raise VertexAIError(
                 status_code=e.response.status_code, message=e.response.text
             )
         except Exception as e:
+            verbose_proxy_logger.error(
+                f"❌ Google API查询缓存异常 - cache_key={cache_key[:50]}..., "
+                f"error={str(e)}, PID={os.getpid()}"
+            )
             raise VertexAIError(status_code=500, message=str(e))
         raw_response = resp.json()
         logging_obj.post_call(original_response=raw_response)
@@ -230,21 +250,24 @@ class ContextCachingEndpoints(VertexBase):
                         remaining_ttl = parse_expire_time_to_remaining_ttl(expire_time)
                         if remaining_ttl is None:
                             # Already expired, don't store in local cache
-                            verbose_proxy_logger.debug(
-                                f"Vertex AI 上下文缓存: ⚠️  找到缓存但已过期 - "
-                                f"cache_id={cache_id}, 过期时间={expire_time}, cache_key={cache_key[:50]}..."
+                            verbose_proxy_logger.info(
+                                f"⚠️  Google API找到缓存但已过期 - "
+                                f"cache_id={cache_id}, name={display_name[:30]}..., "
+                                f"expire_time={expire_time}, PID={os.getpid()}"
                             )
                             return None
                         ttl_seconds = remaining_ttl
-                        verbose_proxy_logger.debug(
-                            f"Vertex AI 上下文缓存: 找到缓存 过期时间={expire_time}, "
-                            f"剩余TTL={ttl_seconds:.1f}秒"
+                        verbose_proxy_logger.info(
+                            f"✅ Google API找到缓存 - cache_id={cache_id}, "
+                            f"name={display_name[:30]}..., expire_time={expire_time}, "
+                            f"剩余TTL={ttl_seconds:.1f}秒, PID={os.getpid()}"
                         )
                     else:
                         # If no expireTime, use default TTL
                         ttl_seconds = 3600.0
-                        verbose_proxy_logger.debug(
-                            f"Vertex AI 上下文缓存: 找到缓存但无过期时间，使用默认TTL={ttl_seconds}秒"
+                        verbose_proxy_logger.info(
+                            f"✅ Google API找到缓存(无过期时间) - cache_id={cache_id}, "
+                            f"name={display_name[:30]}..., 使用默认TTL={ttl_seconds}秒, PID={os.getpid()}"
                         )
 
                     # Store in local cache with accurate TTL
@@ -263,9 +286,9 @@ class ContextCachingEndpoints(VertexBase):
 
                 return cache_id
 
-        verbose_proxy_logger.debug(
-            f"Vertex AI 上下文缓存: Google API 未找到匹配的缓存 - "
-            f"cache_key={cache_key[:50]}..., 总缓存项数={len(all_cached_items.get('cachedContents', []))}"
+        verbose_proxy_logger.info(
+            f"❌ Google API未找到匹配缓存 - cache_key={cache_key[:50]}..., "
+            f"总缓存项数={len(all_cached_items.get('cachedContents', []))}, PID={os.getpid()}"
         )
         return None
 
@@ -313,15 +336,34 @@ class ContextCachingEndpoints(VertexBase):
                 },
             )
 
+            verbose_proxy_logger.info(
+                f"🔍 [异步]请求Google API查询缓存 - cache_key={cache_key[:50]}..., "
+                f"project={vertex_project}, location={vertex_location}, "
+                f"provider={custom_llm_provider}, PID={os.getpid()}, url={url}"
+            )
+
             resp = await client.get(url=url, headers=headers)
             resp.raise_for_status()
+
+            verbose_proxy_logger.info(
+                f"✅ [异步]Google API查询缓存响应成功 - cache_key={cache_key[:50]}..., "
+                f"status_code={resp.status_code}, PID={os.getpid()}"
+            )
         except httpx.HTTPStatusError as e:
+            verbose_proxy_logger.info(
+                f"❌ [异步]Google API查询缓存失败 - cache_key={cache_key[:50]}..., "
+                f"status_code={e.response.status_code}, PID={os.getpid()}"
+            )
             if e.response.status_code == 403:
                 return None
             raise VertexAIError(
                 status_code=e.response.status_code, message=e.response.text
             )
         except Exception as e:
+            verbose_proxy_logger.error(
+                f"❌ [异步]Google API查询缓存异常 - cache_key={cache_key[:50]}..., "
+                f"error={str(e)}, PID={os.getpid()}"
+            )
             raise VertexAIError(status_code=500, message=str(e))
         raw_response = resp.json()
         logging_obj.post_call(original_response=raw_response)
@@ -346,21 +388,24 @@ class ContextCachingEndpoints(VertexBase):
                         remaining_ttl = parse_expire_time_to_remaining_ttl(expire_time)
                         if remaining_ttl is None:
                             # Already expired, don't store in local cache
-                            verbose_proxy_logger.debug(
-                                f"Vertex AI 上下文缓存: ⚠️  [异步] 找到缓存但已过期 - "
-                                f"cache_id={cache_id}, 过期时间={expire_time}, cache_key={cache_key[:50]}..."
+                            verbose_proxy_logger.info(
+                                f"⚠️  [异步]Google API找到缓存但已过期 - "
+                                f"cache_id={cache_id}, name={display_name[:30]}..., "
+                                f"expire_time={expire_time}, PID={os.getpid()}"
                             )
                             return None
                         ttl_seconds = remaining_ttl
-                        verbose_proxy_logger.debug(
-                            f"Vertex AI 上下文缓存: [异步] 找到缓存 过期时间={expire_time}, "
-                            f"剩余TTL={ttl_seconds:.1f}秒"
+                        verbose_proxy_logger.info(
+                            f"✅ [异步]Google API找到缓存 - cache_id={cache_id}, "
+                            f"name={display_name[:30]}..., expire_time={expire_time}, "
+                            f"剩余TTL={ttl_seconds:.1f}秒, PID={os.getpid()}"
                         )
                     else:
                         # If no expireTime, use default TTL
                         ttl_seconds = 3600.0
-                        verbose_proxy_logger.debug(
-                            f"Vertex AI 上下文缓存: [异步] 找到缓存但无过期时间，使用默认TTL={ttl_seconds}秒"
+                        verbose_proxy_logger.info(
+                            f"✅ [异步]Google API找到缓存(无过期时间) - cache_id={cache_id}, "
+                            f"name={display_name[:30]}..., 使用默认TTL={ttl_seconds}秒, PID={os.getpid()}"
                         )
 
                     # Store in local cache with accurate TTL
@@ -379,9 +424,9 @@ class ContextCachingEndpoints(VertexBase):
 
                 return cache_id
 
-        verbose_proxy_logger.debug(
-            f"Vertex AI 上下文缓存: [异步] Google API 未找到匹配的缓存 - "
-            f"cache_key={cache_key[:50]}..., 总缓存项数={len(all_cached_items.get('cachedContents', []))}"
+        verbose_proxy_logger.info(
+            f"❌ [异步]Google API未找到匹配缓存 - cache_key={cache_key[:50]}..., "
+            f"总缓存项数={len(all_cached_items.get('cachedContents', []))}, PID={os.getpid()}"
         )
         return None
 
@@ -550,23 +595,34 @@ class ContextCachingEndpoints(VertexBase):
             },
         )
 
+        verbose_proxy_logger.info(
+            f"🚀 请求Google API创建新缓存 - cache_key={generated_cache_key[:50]}..., "
+            f"project={vertex_project}, location={vertex_location}, "
+            f"provider={custom_llm_provider}, PID={os.getpid()}, url={url}"
+        )
+
         try:
             response = client.post(
                 url=url, headers=headers, json=cached_content_request_body  # type: ignore
             )
             response.raise_for_status()
+
+            verbose_proxy_logger.info(
+                f"✅ Google API创建缓存响应成功 - cache_key={generated_cache_key[:50]}..., "
+                f"status_code={response.status_code}, PID={os.getpid()}"
+            )
         except httpx.HTTPStatusError as err:
             error_code = err.response.status_code
             verbose_proxy_logger.error(
-                f"Vertex AI 上下文缓存: ❌ 创建缓存失败 - "
-                f"状态码={error_code}, cache_key={generated_cache_key[:50]}..., "
+                f"❌ Google API创建缓存失败 - cache_key={generated_cache_key[:50]}..., "
+                f"status_code={error_code}, PID={os.getpid()}, "
                 f"错误={err.response.text[:200]}"
             )
             raise VertexAIError(status_code=error_code, message=err.response.text)
         except httpx.TimeoutException:
             verbose_proxy_logger.error(
-                f"Vertex AI 上下文缓存: ❌ 创建缓存超时 - "
-                f"cache_key={generated_cache_key[:50]}..."
+                f"❌ Google API创建缓存超时 - cache_key={generated_cache_key[:50]}..., "
+                f"PID={os.getpid()}"
             )
             raise VertexAIError(status_code=408, message="Timeout error occurred.")
 
@@ -771,23 +827,34 @@ class ContextCachingEndpoints(VertexBase):
             },
         )
 
+        verbose_proxy_logger.info(
+            f"🚀 [异步]请求Google API创建新缓存 - cache_key={generated_cache_key[:50]}..., "
+            f"project={vertex_project}, location={vertex_location}, "
+            f"provider={custom_llm_provider}, PID={os.getpid()}, url={url}"
+        )
+
         try:
             response = await client.post(
                 url=url, headers=headers, json=cached_content_request_body  # type: ignore
             )
             response.raise_for_status()
+
+            verbose_proxy_logger.info(
+                f"✅ [异步]Google API创建缓存响应成功 - cache_key={generated_cache_key[:50]}..., "
+                f"status_code={response.status_code}, PID={os.getpid()}"
+            )
         except httpx.HTTPStatusError as err:
             error_code = err.response.status_code
             verbose_proxy_logger.error(
-                f"Vertex AI 上下文缓存: ❌ [异步] 创建缓存失败 - "
-                f"状态码={error_code}, cache_key={generated_cache_key[:50]}..., "
+                f"❌ [异步]Google API创建缓存失败 - cache_key={generated_cache_key[:50]}..., "
+                f"status_code={error_code}, PID={os.getpid()}, "
                 f"错误={err.response.text[:200]}"
             )
             raise VertexAIError(status_code=error_code, message=err.response.text)
         except httpx.TimeoutException:
             verbose_proxy_logger.error(
-                f"Vertex AI 上下文缓存: ❌ [异步] 创建缓存超时 - "
-                f"cache_key={generated_cache_key[:50]}..."
+                f"❌ [异步]Google API创建缓存超时 - cache_key={generated_cache_key[:50]}..., "
+                f"PID={os.getpid()}"
             )
             raise VertexAIError(status_code=408, message="Timeout error occurred.")
 
