@@ -116,15 +116,23 @@ class AmazonAnthropicClaudeMessagesConfig(
         )
 
     def _remove_ttl_from_cache_control(
-        self, anthropic_messages_request: Dict
+        self, anthropic_messages_request: Dict, model: str
     ) -> None:
         """
-        Remove `ttl` field from cache_control in messages.
-        Bedrock doesn't support the ttl field in cache_control.
+        Remove `ttl` field from cache_control in messages for older Claude models.
+
+        Claude 4.5 series models (Sonnet 4.5, Haiku 4.5, Opus 4.5) support 1-hour
+        prompt caching with TTL field on Bedrock as of January 26, 2026.
+        For these models, the ttl field is preserved.
 
         Args:
             anthropic_messages_request: The request dictionary to modify in-place
+            model: The model name to check if TTL should be preserved
         """
+        # Claude 4.5 series supports TTL, so don't remove it
+        if self._is_claude_4_5_series(model):
+            return
+
         if "messages" in anthropic_messages_request:
             for message in anthropic_messages_request["messages"]:
                 if isinstance(message, dict) and "content" in message:
@@ -178,6 +186,24 @@ class AmazonAnthropicClaudeMessagesConfig(
             "opus-4.5", "opus_4.5", "opus-4-5", "opus_4_5",
         ]
         return any(pattern in model_lower for pattern in opus_4_5_patterns)
+
+    def _is_claude_4_5_series(self, model: str) -> bool:
+        """
+        Check if the model is a Claude 4.5 series model.
+
+        Claude 4.5 series (Sonnet 4.5, Haiku 4.5, Opus 4.5) support 1-hour
+        prompt caching with TTL field on Bedrock as of January 26, 2026.
+
+        Args:
+            model: The model name
+
+        Returns:
+            True if the model is a Claude 4.5 series model
+        """
+        model_lower = model.lower()
+        has_claude = "claude" in model_lower
+        has_4_5 = any(pattern in model_lower for pattern in ["4.5", "4-5", "4_5"])
+        return has_claude and has_4_5
 
     def _supports_tool_search_on_bedrock(self, model: str) -> bool:
         """
@@ -386,8 +412,8 @@ class AmazonAnthropicClaudeMessagesConfig(
         if "model" in anthropic_messages_request:
             anthropic_messages_request.pop("model", None)
 
-        # 4. Remove `ttl` field from cache_control in messages (Bedrock doesn't support it)
-        self._remove_ttl_from_cache_control(anthropic_messages_request)
+        # 4. Remove `ttl` field from cache_control in messages (except for Claude 4.5 series)
+        self._remove_ttl_from_cache_control(anthropic_messages_request, model)
 
         # 5. Convert `output_format` to inline schema (Bedrock invoke doesn't support output_format)
         output_format = anthropic_messages_request.pop("output_format", None)
